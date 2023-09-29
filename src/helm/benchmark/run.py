@@ -263,14 +263,64 @@ def main():
         help="Experimental: Where to read model deployments from",
         default=[],
     )
+    parser.add_argument(
+        "--num-bits",
+        type=int,
+        default=16,
+        help="Number of bits to load a model in"
+    )
+    parser.add_argument(
+        "--load-adapters",
+        type=bool,
+        default=False,
+        help="Whether or not to load LORA adapters"
+    )
+    parser.add_argument(
+        "--load-layer-norm",
+        type=bool,
+        default=False,
+        help="Whether or not to do special loading code for layer norm"
+    )
+    parser.add_argument(
+        "--layer-norm-weights-path",
+        type=str,
+        default=None,
+        help="Path to the layer norm weights you want to load"
+    )
+    parser.add_argument(
+        "--layer-dropping",
+        type=bool,
+        default=False,
+        help="Whether or not to do special loading code for layer norm"
+    )
+    parser.add_argument(
+        "--layers-to-drop",
+        type=str,
+        default=None,
+        help="Which layers to remove (inputs to Andrey dropping function), ix,start,end"
+    )
     add_run_args(parser)
     args = parser.parse_args()
     validate_args(args)
 
+
+    if args.load_layer_norm:
+        assert len(args.enable_huggingface_models) != 0, "If you are loading layer norm, please provide the name of the base model through enable-huggingface-models"
+        assert os.path.exists(args.layer_norm_weights_path), f"Please provide a valid path through --layer-norm-weights-path"
+
+    if args.layer_dropping:
+        split_layers_to_drop = args.layers_to_drop.strip().split(",")
+        assert len(split_layers_to_drop) == 3, "--split_layers_to_drop should be length 3 (ix, start, end)"
+        assert int(split_layers_to_drop[0]) > 0
+        assert int(split_layers_to_drop[1]) < int(split_layers_to_drop[2])
+        assert args.load_adapters, f"Error please make sure you are loading adapters if you are dropping layers!!"
+    
     for huggingface_model_name in args.enable_huggingface_models:
-        register_huggingface_hub_model_config(huggingface_model_name)
+        register_huggingface_hub_model_config(huggingface_model_name, args.num_bits, args.load_adapters, args.load_layer_norm, args.layer_norm_weights_path)
+    
     for huggingface_model_path in args.enable_local_huggingface_models:
-        register_huggingface_local_model_config(huggingface_model_path)
+        register_huggingface_local_model_config(huggingface_model_path, args.num_bits, args.load_adapters, args.layer_dropping, args.layers_to_drop)
+
     for model_metadata_path in args.model_metadata_paths:
         register_model_metadata_from_path(model_metadata_path)
     for model_deployment_paths in args.model_deployment_paths:

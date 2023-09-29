@@ -32,6 +32,10 @@ class HuggingFaceHubModelConfig:
     """Revision of the model to use e.g. 'main'.
 
     If None, use the default revision."""
+    load_adapters: bool
+    num_bits: int
+    load_layer_norm: bool
+    layer_norm_weights_path: str
 
     @property
     def model_id(self) -> str:
@@ -59,7 +63,7 @@ class HuggingFaceHubModelConfig:
         return result
 
     @staticmethod
-    def from_string(raw: str) -> "HuggingFaceHubModelConfig":
+    def from_string(raw: str, num_bits: int = 16, load_adapters: bool = False, load_layer_norm: bool = False, layer_norm_weights_path: str = None) -> "HuggingFaceHubModelConfig":
         """Parses a string in the format "[namespace/]model_name[@revision]" to a HuggingFaceHubModelConfig.
 
         Examples:
@@ -73,9 +77,8 @@ class HuggingFaceHubModelConfig:
         model_name = match.group("model_name")
         assert model_name
         return HuggingFaceHubModelConfig(
-            namespace=match.group("namespace"), model_name=model_name, revision=match.group("revision")
+            namespace=match.group("namespace"), model_name=model_name, revision=match.group("revision"), num_bits=num_bits, load_adapters=load_adapters, load_layer_norm=load_layer_norm, layer_norm_weights_path=layer_norm_weights_path
         )
-
 
 @dataclass(frozen=True)
 class HuggingFaceLocalModelConfig:
@@ -87,6 +90,11 @@ class HuggingFaceLocalModelConfig:
     For pre-registered local models that are already in _huggingface_model_registry below,
     this will get set to LOCAL_HUGGINGFACE_MODEL_DIR by default.
     Otherwise, this is specified using the flag --enable-local-huggingface-models <path>."""
+
+    load_adapters: bool
+    num_bits: int
+    layer_dropping: bool
+    layers_to_drop: str
 
     @property
     def model_id(self) -> str:
@@ -105,10 +113,10 @@ class HuggingFaceLocalModelConfig:
         return f"huggingface/{self.model_name}"
 
     @staticmethod
-    def from_path(path: str) -> "HuggingFaceLocalModelConfig":
+    def from_path(path: str, num_bits: int = 16, load_adapters: bool = False, layer_dropping:bool = False, layers_to_drop:str = None) -> "HuggingFaceLocalModelConfig":
         """Generates a HuggingFaceHubModelConfig from a (relative or absolute) path to a local HuggingFace model."""
         model_name = os.path.split(path)[-1]
-        return HuggingFaceLocalModelConfig(model_name=model_name, path=path)
+        return HuggingFaceLocalModelConfig(model_name=model_name, path=path, load_adapters=load_adapters, num_bits=num_bits, layer_dropping=layer_dropping, layers_to_drop=layers_to_drop)
 
 
 HuggingFaceModelConfig = Union[HuggingFaceHubModelConfig, HuggingFaceLocalModelConfig]
@@ -122,11 +130,11 @@ _huggingface_model_registry: Dict[str, HuggingFaceModelConfig] = {
 }
 
 
-def register_huggingface_hub_model_config(model_name: str) -> HuggingFaceHubModelConfig:
+def register_huggingface_hub_model_config(model_name: str, num_bits: int, load_adapters: bool, load_layer_norm: bool, layer_norm_weights_path: str) -> HuggingFaceHubModelConfig:
     """Register a AutoModelForCausalLM model from Hugging Face Model Hub for later use.
 
     model_name format: namespace/model_name[@revision]"""
-    config = HuggingFaceHubModelConfig.from_string(model_name)
+    config = HuggingFaceHubModelConfig.from_string(model_name, num_bits, load_adapters, load_layer_norm, layer_norm_weights_path)
     if config.model_id in _huggingface_model_registry:
         raise ValueError(f"A Hugging Face model is already registered for model_id {model_name}")
     _huggingface_model_registry[config.model_id] = config
@@ -150,11 +158,11 @@ def register_huggingface_hub_model_config(model_name: str) -> HuggingFaceHubMode
     return config
 
 
-def register_huggingface_local_model_config(path: str) -> HuggingFaceLocalModelConfig:
+def register_huggingface_local_model_config(path: str, num_bits: int, load_adapters: bool, layer_dropping: bool, layers_to_drop: str) -> HuggingFaceLocalModelConfig:
     """Register a AutoModelForCausalLM model from a local directory for later use.
 
     path: a path to your HF model"""
-    config = HuggingFaceLocalModelConfig.from_path(path)
+    config = HuggingFaceLocalModelConfig.from_path(path, num_bits, load_adapters, layer_dropping, layers_to_drop)
     if config.model_id in _huggingface_model_registry:
         raise ValueError(f"A Hugging Face model is already registered for model_id {config.model_id}")
     _huggingface_model_registry[config.model_id] = config

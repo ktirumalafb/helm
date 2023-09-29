@@ -1,7 +1,7 @@
 from copy import deepcopy
 import torch
 from dataclasses import asdict
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from typing import Any, Dict, List
 
 from helm.common.cache import Cache, CacheConfig
@@ -23,6 +23,11 @@ from helm.proxy.clients.huggingface_model_registry import (
     HuggingFaceLocalModelConfig,
 )
 from threading import Lock
+import os
+import json
+from peft import PeftModel
+from torch import nn
+import torch
 
 
 # Map of HELM model name to Hugging Face Hub model name where they differ.
@@ -50,13 +55,165 @@ class HuggingFaceServer:
                 model_kwargs["revision"] = model_config.revision
         else:
             raise Exception(f"Unknown type of model_config: {model_config}")
-        with htrack_block(f"Loading Hugging Face model for config {model_config}"):
-            # WARNING this may fail if your GPU does not have enough memory
-            self.model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True, **model_kwargs).to(
-                self.device
+
+        if not model_config.load_adapters:
+            with htrack_block(f"Loading Hugging Face model + tokenizer for config {model_config}"):
+                # WARNING this may fail if your GPU does not have enough memory
+                self.model, self.tokenizer = self.load_non_peft_model(model_name, model_config, model_kwargs)
+
+                if model_config.load_layer_norm:
+                    # Load normally at first
+                    hlog(f"Loading with different layer norm parameters given by path -> {model_config.layer_norm_weights_path}")
+                    self.model = self.merge_LN(self.model, model_config.layer_norm_weights_path)
+        else:
+            with htrack_block(f"Loading Hugging Face model + tokenizer in PEFT mode for config {model_config}"):
+                self.model, self.tokenizer = self.load_peft_model_with_adapters(model_name, layer_dropping=model_config.layer_dropping, layers_to_drop=model_config.layers_to_drop)
+
+    def merge_LN(self, model, path_to_params):
+        #turn off all the gradidents
+        for p in model.parameters():
+            p.requires_grad=False 
+
+        #read the LN weights
+        ln_params = {}
+        with open(path_to_params, 'r') as file:
+            ln_params = json.load(file)
+
+        #original model and tuned model have different name for the modules. Differ by '_orig_mod.'
+        #double loop is not optimal, but works
+        for (n, p) in model.named_parameters():
+            for key in ln_params.keys():
+                new_key = key.replace('_orig_mod.', '', 1) # strip the '_orig_mod.'
+                if new_key == n:
+                    p.copy_(torch.tensor(ln_params[key]).to("cuda")) #copy the tensor
+        return model
+
+    def load_non_peft_model(self, model_name: str, model_config, model_kwargs):
+        device_map = "auto"
+        if (model_config.num_bits == 4) or (model_config.num_bits == 8):
+            if model_config.num_bits == 4:
+                bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                )
+
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_name, 
+                    quantization_config=bnb_config,
+                    device_map=device_map,
+                    trust_remote_code=True
+                )
+
+            elif model_config.num_bits == 8:
+
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_name,
+                    load_in_8bit=True,
+                    torch_dtype=torch.bfloat16,
+                    device_map=device_map,
+                    trust_remote_code=True,
+                    **model_kwargs
+                )
+
+
+        else:
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch.bfloat16,
+                trust_remote_code=True, **model_kwargs
+            ).to(self.device)
+            
+        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, **model_kwargs)
+    
+        # model = torch.compile(model)
+        
+        assert model is not None
+        assert tokenizer is not None
+        return model, tokenizer
+
+    def load_peft_model_with_adapters(self, MODEL_PATH: str, layer_dropping: bool = False, layers_to_drop: str = None):
+        # Set device
+        device_map = "auto"
+
+        config_path = os.path.join(MODEL_PATH, "config.json")
+        if not os.path.exists(config_path):
+            print(f"Config path {config_path} does not exist... exiting...")
+
+        config = None
+        with open(config_path) as f:
+            config = json.load(f)
+
+        if 'quantization_config' in config:
+            q_config = config["quantization_config"]
+            # Read the bits and bytes config from the `config.json` to make sure we use the same one
+            bnb_config = BitsAndBytesConfig(
+                load_in_8bit=q_config["load_in_8bit"],
+                load_in_4bit=q_config["load_in_4bit"],
+                llm_int8_threshold=q_config["llm_int8_threshold"],
+                llm_int8_skip_modules=q_config["llm_int8_skip_modules"],
+                llm_int8_enable_fp32_cpu_offload=q_config["llm_int8_enable_fp32_cpu_offload"],
+                llm_int8_has_fp16_weight=q_config["llm_int8_has_fp16_weight"],
+                bnb_4bit_compute_dtype=q_config["bnb_4bit_compute_dtype"],
+                bnb_4bit_quant_type=q_config["bnb_4bit_quant_type"],
+                bnb_4bit_use_double_quant=q_config["bnb_4bit_use_double_quant"],
             )
-        with htrack_block(f"Loading Hugging Face tokenizer model for config {model_config}"):
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name, **model_kwargs)
+
+
+        # Set path to the base model with which we will merge our trained LoRA weights. Can be local.
+        base_model_path = config["_name_or_path"]
+
+        # Load base model
+        model_base = AutoModelForCausalLM.from_pretrained(
+            base_model_path, 
+            quantization_config=bnb_config,
+            device_map=device_map
+        )
+
+        TOKENIZER_FILE = os.path.join(base_model_path, "tokenizer.json")
+
+        # Get tokenizer from the same place.
+        tokenizer = AutoTokenizer.from_pretrained(
+            base_model_path, local_files_only=False, use_fast=True#, **tokenizer_kwargs
+        )
+
+        # Tokenizer config consistent with Platypus.
+        bos = tokenizer.bos_token_id
+        eos = tokenizer.eos_token_id
+        pad = tokenizer.pad_token_id
+        print("pre-trained model's BOS EOS and PAD token id:",bos,eos,pad," => It should be 1 2 None")
+
+        tokenizer.pad_token_id = 0  # unk. we want this to be different from the eos token
+        tokenizer.padding_side = "right"
+
+        # If we decide to drop layers, do it before loading LORA adapters
+        if layer_dropping:
+            # Cutting a few layers out.
+            def get_layers_to_drop(ix, start, end):
+                    start = start
+                    end = end
+                    step = (end - start) // (ix)
+                    layer_ixs = torch.arange(start, end, step)
+                    return layer_ixs
+
+            ix,start_idx,end_idx = layers_to_drop.strip().split(",")
+            ix,start_idx,end_idx = int(ix),int(start_idx),int(end_idx)
+            blocks_to_remove = get_layers_to_drop(ix, start_idx, end_idx)
+            print(f"We are removing: {blocks_to_remove} layers")
+
+            model_base.model.layers = nn.ModuleList([block for idx, block in enumerate(model_base.model.layers) if idx not in blocks_to_remove])
+
+        # Load & merge
+        tuned_model = PeftModel.from_pretrained(
+            model_base,
+            MODEL_PATH,
+            torch_dtype=torch.bfloat16,
+        )
+
+        # tuned_model = torch.compile(tuned_model)
+
+        return tuned_model, tokenizer
 
     def serve_request(self, raw_request: Dict[str, Any]):
         encoded_input = self.tokenizer(raw_request["prompt"], return_tensors="pt", return_token_type_ids=False).to(
