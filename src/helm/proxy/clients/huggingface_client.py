@@ -69,6 +69,10 @@ class HuggingFaceServer:
             with htrack_block(f"Loading Hugging Face model + tokenizer in PEFT mode for config {model_config}"):
                 self.model, self.tokenizer = self.load_peft_model_with_adapters(model_name, layer_dropping=model_config.layer_dropping, layers_to_drop=model_config.layers_to_drop)
 
+            if model_config.load_layer_norm:
+                hlog(f"Loading with different layer norm parameters given by path -> {model_config.layer_norm_weights_path}")
+                self.model = self.merge_LN(self.model, model_config.layer_norm_weights_path)
+                
     def merge_LN(self, model, path_to_params):
         #turn off all the gradidents
         for p in model.parameters():
