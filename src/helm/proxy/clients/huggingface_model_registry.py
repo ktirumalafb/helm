@@ -160,11 +160,11 @@ def register_huggingface_hub_model_config(model_name: str, num_bits: int, load_a
     return config
 
 
-def register_huggingface_local_model_config(path: str, num_bits: int, load_adapters: bool, layer_dropping: bool, layers_to_drop: str) -> HuggingFaceLocalModelConfig:
+def register_huggingface_local_model_config(path: str, num_bits: int, load_adapters: bool, layer_dropping: bool, layers_to_drop: str,  load_layer_norm: bool, layer_norm_weights_path: str) -> HuggingFaceLocalModelConfig:
     """Register a AutoModelForCausalLM model from a local directory for later use.
 
     path: a path to your HF model"""
-    config = HuggingFaceLocalModelConfig.from_path(path, num_bits, load_adapters, layer_dropping, layers_to_drop)
+    config = HuggingFaceLocalModelConfig.from_path(path, num_bits, load_adapters, layer_dropping, layers_to_drop, load_layer_norm, layer_norm_weights_path)
     if config.model_id in _huggingface_model_registry:
         raise ValueError(f"A Hugging Face model is already registered for model_id {config.model_id}")
     _huggingface_model_registry[config.model_id] = config
