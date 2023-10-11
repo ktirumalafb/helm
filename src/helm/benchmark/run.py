@@ -19,6 +19,7 @@ from helm.benchmark.adaptation.adapter_spec import AdapterSpec
 from .executor import ExecutionSpec
 from .runner import Runner, RunSpec, LATEST_SYMLINK
 from .run_specs import construct_run_specs
+import os
 
 
 def run_entries_to_run_specs(
@@ -305,7 +306,7 @@ def main():
 
 
     if args.load_layer_norm:
-        assert len(args.enable_huggingface_models) != 0 or len(args.enable_local_huggingface_models) != 0, "If you are loading layer norm, please provide the name of the base model through enable-huggingface-models or through enable-local-huggingface-models"
+        assert (len(args.enable_huggingface_models) != 0) or len(args.enable_local_huggingface_models) != 0, "If you are loading layer norm, please provide the name of the base model through enable-huggingface-models or through enable-local-huggingface-models"
         assert os.path.exists(args.layer_norm_weights_path), f"Please provide a valid path through --layer-norm-weights-path"
 
     if args.layer_dropping:
