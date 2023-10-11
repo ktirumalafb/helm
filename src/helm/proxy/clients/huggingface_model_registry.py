@@ -95,6 +95,8 @@ class HuggingFaceLocalModelConfig:
     num_bits: int
     layer_dropping: bool
     layers_to_drop: str
+    load_layer_norm: bool
+    layer_norm_weights_path: str
 
     @property
     def model_id(self) -> str:
@@ -113,10 +115,10 @@ class HuggingFaceLocalModelConfig:
         return f"huggingface/{self.model_name}"
 
     @staticmethod
-    def from_path(path: str, num_bits: int = 16, load_adapters: bool = False, layer_dropping:bool = False, layers_to_drop:str = None) -> "HuggingFaceLocalModelConfig":
+    def from_path(path: str, num_bits: int = 16, load_adapters: bool = False, layer_dropping:bool = False, layers_to_drop:str = None,  load_layer_norm: bool = False, layer_norm_weights_path: str = None) -> "HuggingFaceLocalModelConfig":
         """Generates a HuggingFaceHubModelConfig from a (relative or absolute) path to a local HuggingFace model."""
         model_name = os.path.split(path)[-1]
-        return HuggingFaceLocalModelConfig(model_name=model_name, path=path, load_adapters=load_adapters, num_bits=num_bits, layer_dropping=layer_dropping, layers_to_drop=layers_to_drop)
+        return HuggingFaceLocalModelConfig(model_name=model_name, path=path, load_adapters=load_adapters, num_bits=num_bits, layer_dropping=layer_dropping, layers_to_drop=layers_to_drop, load_layer_norm=load_layer_norm, layer_norm_weights_path=layer_norm_weights_path)
 
 
 HuggingFaceModelConfig = Union[HuggingFaceHubModelConfig, HuggingFaceLocalModelConfig]

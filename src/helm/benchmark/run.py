@@ -319,7 +319,7 @@ def main():
         register_huggingface_hub_model_config(huggingface_model_name, args.num_bits, args.load_adapters, args.load_layer_norm, args.layer_norm_weights_path)
     
     for huggingface_model_path in args.enable_local_huggingface_models:
-        register_huggingface_local_model_config(huggingface_model_path, args.num_bits, args.load_adapters, args.layer_dropping, args.layers_to_drop)
+        register_huggingface_local_model_config(huggingface_model_path, args.num_bits, args.load_adapters, args.layer_dropping, args.layers_to_drop, args.load_layer_norm, args.layer_norm_weights_path)
 
     for model_metadata_path in args.model_metadata_paths:
         register_model_metadata_from_path(model_metadata_path)
